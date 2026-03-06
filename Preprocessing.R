@@ -32,16 +32,8 @@ library(fastDummies)
 # STEP 1: LOAD DATASET
 # -------------------------
 # Reads the CSV file selected by the user
-df <- read_csv(file.choose(), show_col_types = FALSE)
+df <- read.csv(file.choose(), stringsAsFactors = FALSE)
 
-# Ensure ID columns remain unchanged as character values
-if ("transaction_id" %in% names(df)) {
-  df$transaction_id <- as.character(df$transaction_id)
-}
-
-if ("merchant_id" %in% names(df)) {
-  df$merchant_id <- as.character(df$merchant_id)
-}
 # =========================================================
 # ==================== DATA CLEANING =======================
 # =========================================================
@@ -73,7 +65,6 @@ df[char_cols] <- lapply(df[char_cols], function(x) {
 # CLEANING 4: DETECT IMPORTANT COLUMNS
 # -------------------------
 # Detect likely amount and time columns from common possible names
-
 amount_candidates <- c("transaction_amount", "amount", "txn_amount", "price", "value")
 amount_col <- amount_candidates[amount_candidates %in% names(df)][1]
 
@@ -144,16 +135,18 @@ for (col in cat_cols) {
 # -------------------------
 # TRANSFORMATION 1: EXTRACT TIME FEATURES
 # -------------------------
-# Converts transaction timestamp into meaningful attributes
-# year, month, day, hour, minute, second
+# Dataset date format = MM/DD/YYYY HH:MM
+# Example: 11/24/2023 22:39
 if (!is.na(time_col)) {
   
-  parsed_time <- parse_date_time(
-    df[[time_col]],
-    orders = c("mdy HMS", "dmy HMS", "ymd HMS",
-               "mdy HM", "dmy HM", "ymd HM", "ymd"),
-    tz = "Asia/Kolkata"
-  )
+  # Force MM/DD/YYYY HH:MM format
+  parsed_time <- mdy_hm(df[[time_col]], tz = "Asia/Kolkata")
+  
+  # If some rows include seconds, fill them using mdy_hms where needed
+  bad_rows <- is.na(parsed_time) & !is.na(df[[time_col]]) & df[[time_col]] != ""
+  if (any(bad_rows)) {
+    parsed_time[bad_rows] <- mdy_hms(df[[time_col]][bad_rows], tz = "Asia/Kolkata")
+  }
   
   df$transaction_year   <- year(parsed_time)
   df$transaction_month  <- month(parsed_time)
@@ -187,7 +180,6 @@ if ("transaction_amount_clean" %in% names(df)) {
 # These important columns are NOT encoded:
 # transaction_id, merchant_id, customer_id, customer_age,
 # location, purchase_category, is_fraud, original amount, original time
-
 exclude_encode <- c("transaction_id",
                     "merchant_id",
                     "customer_id",
