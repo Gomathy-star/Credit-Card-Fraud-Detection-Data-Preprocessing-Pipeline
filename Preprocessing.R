@@ -1,159 +1,265 @@
 # =========================================================
-# PREPROCESSING PIPELINE (RStudio)
-# - Cleans columns/text
-# - Cleans amount to numeric (INR)
-# - Extracts ONLY useful time parts (Y/M/D/H/M/S)
-# - Replaces NA: numeric -> MEDIAN, categorical -> MODE
-# - Outlier capping (IQR) on amount
-# - One-hot encodes categorical columns EXCEPT:
-#     location, purchase_category, is_fraud
-# - Scaling (z-score) on numeric columns EXCEPT is_fraud
-# - Saves final CSV
+# CREDIT CARD FRAUD DATA PREPROCESSING PIPELINE
+# =========================================================
+# This script performs:
+# 1. DATA CLEANING
+#    - removes duplicate rows
+#    - standardizes column names
+#    - cleans text values
+#    - creates a clean numeric copy of transaction amount
+#    - removes rows without transaction time/date
+#    - handles missing values
+#
+# 2. DATA TRANSFORMATION
+#    - extracts useful time-based features
+#    - handles outliers in cleaned amount column
+#    - encodes selected categorical variables
+#
+# 3. FINAL OUTPUT PREPARATION
+#    - keeps important columns readable
+#    - saves a clean and sensible CSV file
 # =========================================================
 
+# -------------------------
+# LOAD REQUIRED LIBRARIES
+# -------------------------
 library(tidyverse)
 library(janitor)
 library(lubridate)
-library(caret)
 library(fastDummies)
 
 # -------------------------
-# 1) LOAD DATA
+# STEP 1: LOAD DATASET
 # -------------------------
-df <- read.csv(file.choose(), stringsAsFactors = FALSE)
+# Reads the CSV file selected by the user
+df <- read_csv(file.choose(), show_col_types = FALSE)
+
+# Ensure ID columns remain unchanged as character values
+if ("transaction_id" %in% names(df)) {
+  df$transaction_id <- as.character(df$transaction_id)
+}
+
+if ("merchant_id" %in% names(df)) {
+  df$merchant_id <- as.character(df$merchant_id)
+}
+# =========================================================
+# ==================== DATA CLEANING =======================
+# =========================================================
 
 # -------------------------
-# 2) DATA CLEANING
+# CLEANING 1: REMOVE DUPLICATES
 # -------------------------
-
-# Remove duplicates
+# Removes repeated rows to avoid duplicate transaction records
 df <- df %>% distinct()
 
-# Clean column names
+# -------------------------
+# CLEANING 2: STANDARDIZE COLUMN NAMES
+# -------------------------
+# Converts column names to lowercase and replaces spaces with underscores
 df <- clean_names(df)
 
-# Clean text columns (remove brackets + trim)
+# -------------------------
+# CLEANING 3: CLEAN TEXT COLUMNS
+# -------------------------
+# Removes brackets () [] {} and trims extra spaces from text columns
 char_cols <- names(df)[sapply(df, is.character)]
-df[char_cols] <- lapply(df[char_cols], function(x){
+
+df[char_cols] <- lapply(df[char_cols], function(x) {
   x <- gsub("\\[|\\]|\\(|\\)|\\{|\\}", "", x)
   trimws(x)
 })
 
-# Clean currency/amount column (if present)
-amount_candidates <- c("amount","transaction_amount","txn_amount","price","value")
+# -------------------------
+# CLEANING 4: DETECT IMPORTANT COLUMNS
+# -------------------------
+# Detect likely amount and time columns from common possible names
+
+amount_candidates <- c("transaction_amount", "amount", "txn_amount", "price", "value")
 amount_col <- amount_candidates[amount_candidates %in% names(df)][1]
 
-if(!is.na(amount_col)){
-  df[[amount_col]] <- gsub("₹|INR|Rs\\.|rs\\.|,", "", df[[amount_col]])
-  df[[amount_col]] <- as.numeric(df[[amount_col]])
-  
-  names(df)[names(df) == amount_col] <- paste0(amount_col, "_inr")
-  amount_col <- paste0(amount_col, "_inr")
-}
-
-# -------------------------
-# 3) DATA TRANSFORMATION
-# -------------------------
-
-# Split combined columns if any (optional)
-combo_candidates <- c("ram_rom","memory","device_memory")
-combo_col <- combo_candidates[combo_candidates %in% names(df)][1]
-
-if(!is.na(combo_col)){
-  df <- df %>%
-    separate(.data[[combo_col]], into = c("part1","part2"), sep = "/", fill = "right")
-}
-
-# Extract ONLY useful time features from transaction_time/date/timestamp
-time_candidates <- c("transaction_time","transaction_date","date","timestamp","time")
+time_candidates <- c("transaction_time", "transaction_date", "date", "timestamp", "time")
 time_col <- time_candidates[time_candidates %in% names(df)][1]
 
-if(!is.na(time_col)){
-  df[[time_col]] <- parse_date_time(df[[time_col]],
-                                    orders = c("mdy HMS","dmy HMS","ymd HMS","mdy HM","dmy HM","ymd HM","ymd"),
-                                    tz = "Asia/Kolkata")
+cat("Detected amount column:", amount_col, "\n")
+cat("Detected time column:", time_col, "\n")
+
+# -------------------------
+# CLEANING 5: CREATE CLEAN NUMERIC COPY OF AMOUNT
+# -------------------------
+# Keeps original amount column unchanged
+# Creates a separate numeric column for analysis/modeling
+if (!is.na(amount_col)) {
+  df$transaction_amount_clean <- gsub("₹|INR|Rs\\.|rs\\.|,", "", df[[amount_col]])
+  df$transaction_amount_clean <- as.numeric(df$transaction_amount_clean)
+}
+
+# -------------------------
+# CLEANING 6: REMOVE ROWS WITHOUT TRANSACTION TIME
+# -------------------------
+# Rows without transaction time/date are not useful for time-based analysis
+# so they are removed before feature extraction
+if (!is.na(time_col)) {
+  before_rows <- nrow(df)
   
   df <- df %>%
-    mutate(
-      txn_year   = year(.data[[time_col]]),
-      txn_month  = month(.data[[time_col]]),
-      txn_day    = day(.data[[time_col]]),
-      txn_hour   = hour(.data[[time_col]]),
-      txn_minute = minute(.data[[time_col]]),
-      txn_second = second(.data[[time_col]])
-    )
+    filter(!is.na(.data[[time_col]]) & .data[[time_col]] != "")
+  
+  after_rows <- nrow(df)
+  
+  cat("Rows removed due to missing transaction time/date:", before_rows - after_rows, "\n")
 }
 
 # -------------------------
-# 4) MISSING VALUE IMPUTATION
+# CLEANING 7: HANDLE MISSING VALUES
 # -------------------------
+# Numeric NA values -> replaced with MEDIAN of the column
+# Categorical NA values -> replaced with MODE of the column
 
-# Numeric NA -> median
+# Numeric NA imputation
 num_cols <- names(df)[sapply(df, is.numeric)]
-for(col in num_cols){
-  if(any(is.na(df[[col]]))){
+
+for (col in num_cols) {
+  if (any(is.na(df[[col]]))) {
     med <- median(df[[col]], na.rm = TRUE)
     df[[col]][is.na(df[[col]])] <- med
+    cat("Filled numeric NA in:", col, "using median =", med, "\n")
   }
 }
 
-# Categorical NA -> mode
+# Categorical NA imputation
 cat_cols <- names(df)[sapply(df, is.character)]
-for(col in cat_cols){
-  if(any(is.na(df[[col]]))){
+
+for (col in cat_cols) {
+  if (any(is.na(df[[col]]))) {
     mode_val <- names(sort(table(df[[col]]), decreasing = TRUE))[1]
     df[[col]][is.na(df[[col]])] <- mode_val
+    cat("Filled categorical NA in:", col, "using mode =", mode_val, "\n")
   }
 }
 
+# =========================================================
+# ================= DATA TRANSFORMATION ====================
+# =========================================================
+
 # -------------------------
-# 5) OUTLIER HANDLING (IQR CAPPING on amount)
+# TRANSFORMATION 1: EXTRACT TIME FEATURES
 # -------------------------
-if(!is.na(amount_col) && amount_col %in% names(df)){
-  Q1 <- quantile(df[[amount_col]], 0.25, na.rm = TRUE)
-  Q3 <- quantile(df[[amount_col]], 0.75, na.rm = TRUE)
-  IQRv <- Q3 - Q1
-  lower <- Q1 - 1.5 * IQRv
-  upper <- Q3 + 1.5 * IQRv
-  df[[amount_col]] <- pmin(pmax(df[[amount_col]], lower), upper)
+# Converts transaction timestamp into meaningful attributes
+# year, month, day, hour, minute, second
+if (!is.na(time_col)) {
+  
+  parsed_time <- parse_date_time(
+    df[[time_col]],
+    orders = c("mdy HMS", "dmy HMS", "ymd HMS",
+               "mdy HM", "dmy HM", "ymd HM", "ymd"),
+    tz = "Asia/Kolkata"
+  )
+  
+  df$transaction_year   <- year(parsed_time)
+  df$transaction_month  <- month(parsed_time)
+  df$transaction_day    <- day(parsed_time)
+  df$transaction_hour   <- hour(parsed_time)
+  df$transaction_minute <- minute(parsed_time)
+  df$transaction_second <- second(parsed_time)
 }
 
 # -------------------------
-# 6) ENCODING (EXCEPT location, purchase_category, is_fraud)
+# TRANSFORMATION 2: HANDLE OUTLIERS IN CLEAN AMOUNT COLUMN
 # -------------------------
-exclude_cols <- c("location", "purchase_category", "is_fraud")
-cat_cols <- names(df)[sapply(df, is.character)]
-encode_cols <- setdiff(cat_cols, exclude_cols)
+# Uses IQR capping on the cleaned numeric amount column only
+# Original amount column remains unchanged
+if ("transaction_amount_clean" %in% names(df)) {
+  
+  Q1 <- quantile(df$transaction_amount_clean, 0.25, na.rm = TRUE)
+  Q3 <- quantile(df$transaction_amount_clean, 0.75, na.rm = TRUE)
+  IQRv <- Q3 - Q1
+  
+  lower <- Q1 - 1.5 * IQRv
+  upper <- Q3 + 1.5 * IQRv
+  
+  df$transaction_amount_clean <- pmin(pmax(df$transaction_amount_clean, lower), upper)
+}
 
-if(length(encode_cols) > 0){
+# -------------------------
+# TRANSFORMATION 3: ENCODE SELECTED CATEGORICAL VARIABLES
+# -------------------------
+# One-hot encoding is applied only to selected text columns
+# These important columns are NOT encoded:
+# transaction_id, merchant_id, customer_id, customer_age,
+# location, purchase_category, is_fraud, original amount, original time
+
+exclude_encode <- c("transaction_id",
+                    "merchant_id",
+                    "customer_id",
+                    "customer_age",
+                    "location",
+                    "purchase_category",
+                    "is_fraud",
+                    amount_col,
+                    time_col)
+
+cat_cols <- names(df)[sapply(df, is.character)]
+encode_cols <- setdiff(cat_cols, exclude_encode)
+
+if (length(encode_cols) > 0) {
   df <- dummy_cols(df,
                    select_columns = encode_cols,
                    remove_selected_columns = TRUE,
                    remove_first_dummy = TRUE)
 }
 
-# -------------------------
-# 7) FEATURE SCALING (Exclude is_fraud)
-# -------------------------
-target_col <- if ("is_fraud" %in% names(df)) "is_fraud" else NA
+# =========================================================
+# ============ FINAL DATASET ORGANIZATION ==================
+# =========================================================
 
-num_cols <- names(df)[sapply(df, is.numeric)]
-num_cols_scale <- setdiff(num_cols, target_col)
+# -------------------------
+# ORGANIZE COLUMNS FOR READABLE OUTPUT
+# -------------------------
+# Places important original columns first
+front_cols <- c("transaction_id",
+                "merchant_id",
+                "customer_id",
+                "customer_age",
+                amount_col,
+                "transaction_amount_clean",
+                "location",
+                "purchase_category",
+                "is_fraud",
+                time_col,
+                "transaction_year",
+                "transaction_month",
+                "transaction_day",
+                "transaction_hour",
+                "transaction_minute",
+                "transaction_second")
 
-if(length(num_cols_scale) > 0){
-  pre_obj <- preProcess(df[, num_cols_scale, drop = FALSE], method = c("center","scale"))
-  df[, num_cols_scale] <- predict(pre_obj, df[, num_cols_scale, drop = FALSE])
+front_cols <- front_cols[front_cols %in% names(df)]
+other_cols <- setdiff(names(df), front_cols)
+
+df <- df[, c(front_cols, other_cols)]
+
+# =========================================================
+# ==================== FINAL CHECK =========================
+# =========================================================
+
+# Check if any NA values still remain
+na_counts <- colSums(is.na(df))
+
+if (sum(na_counts) == 0) {
+  cat("\nAll missing values handled successfully.\n")
+} else {
+  cat("\nRemaining missing values:\n")
+  print(na_counts[na_counts > 0])
 }
 
-# -------------------------
-# 8) FINAL NA CHECK + SAVE
-# -------------------------
-na_left <- colSums(is.na(df))
-na_left <- na_left[na_left > 0]
+# Display final size of dataset
+cat("\nFinal dataset shape:", nrow(df), "rows x", ncol(df), "columns\n")
 
-cat("\nNA remaining (should be none):\n")
-if(length(na_left) == 0) cat("0 NA remaining \n") else print(na_left)
+# =========================================================
+# ================= SAVE FINAL OUTPUT ======================
+# =========================================================
 
+# Save the cleaned and transformed dataset
 write.csv(df, "cleaned_transformed_fraud_final.csv", row.names = FALSE)
-cat("\nSaved: cleaned_transformed_fraud_final.csv\n")
-cat("Final dataset shape:", nrow(df), "rows x", ncol(df), "columns\n")
+
+cat("File saved successfully as: cleaned_transformed_fraud_final.csv\n")
