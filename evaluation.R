@@ -1,9 +1,6 @@
 # ============================================
 # FRAUD DETECTION - MODEL EVALUATION SCRIPT
 # ============================================
-# Run this AFTER model.R has been executed
-# It loads the saved model and evaluates it
-# ============================================
 
 # 1. Load required libraries
 library(randomForest)
@@ -15,13 +12,10 @@ library(ggplot2)     # For plots
 # STEP 1: Load Model & Data
 # ============================================
 
-# Load the saved model
 load("fraud_model.RData")  # loads rf_model
 
-# Load the cleaned dataset
 data <- read.csv("cleaned_transformed_fraud_final.csv")
 
-# Same preprocessing as model.R
 data <- data[, !(names(data) %in% c("transaction_id", "customer_id", "transaction_time"))]
 data <- data[, !grepl("fraud_type", names(data))]
 data$transaction_amount_clean <- NULL
