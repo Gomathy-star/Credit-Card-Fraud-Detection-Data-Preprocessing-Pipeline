@@ -1,6 +1,6 @@
-# =========================================================
+#***********************************************************
 # CREDIT CARD FRAUD DATA PREPROCESSING PIPELINE
-# =========================================================
+#***********************************************************
 # This script performs:
 # 1. DATA CLEANING
 #    - removes duplicate rows
@@ -18,41 +18,41 @@
 # 3. FINAL OUTPUT PREPARATION
 #    - keeps important columns readable
 #    - saves a clean and sensible CSV file
-# =========================================================
+#***********************************************************
 
-# -------------------------
+#***********************************************************
 # LOAD REQUIRED LIBRARIES
-# -------------------------
+#***********************************************************
 library(tidyverse)
 library(janitor)
 library(lubridate)
 library(fastDummies)
 
-# -------------------------
+#***********************************************************
 # STEP 1: LOAD DATASET
-# -------------------------
+#***********************************************************
 # Reads the CSV file selected by the user
 df <- read.csv(file.choose(), stringsAsFactors = FALSE)
 
-# =========================================================
-# ==================== DATA CLEANING =======================
-# =========================================================
+#***********************************************************
+#***********************DATA CLEANING***********************
+#***********************************************************
 
-# -------------------------
+#***********************************************************
 # CLEANING 1: REMOVE DUPLICATES
-# -------------------------
+#***********************************************************
 # Removes repeated rows to avoid duplicate transaction records
 df <- df %>% distinct()
 
-# -------------------------
+#***********************************************************
 # CLEANING 2: STANDARDIZE COLUMN NAMES
-# -------------------------
+#***********************************************************
 # Converts column names to lowercase and replaces spaces with underscores
 df <- clean_names(df)
 
-# -------------------------
+#***********************************************************
 # CLEANING 3: CLEAN TEXT COLUMNS
-# -------------------------
+#***********************************************************
 # Removes brackets () [] {} and trims extra spaces from text columns
 char_cols <- names(df)[sapply(df, is.character)]
 
@@ -61,9 +61,9 @@ df[char_cols] <- lapply(df[char_cols], function(x) {
   trimws(x)
 })
 
-# -------------------------
+#***********************************************************
 # CLEANING 4: DETECT IMPORTANT COLUMNS
-# -------------------------
+#***********************************************************
 # Detect likely amount and time columns from common possible names
 amount_candidates <- c("transaction_amount", "amount", "txn_amount", "price", "value")
 amount_col <- amount_candidates[amount_candidates %in% names(df)][1]
@@ -74,9 +74,10 @@ time_col <- time_candidates[time_candidates %in% names(df)][1]
 cat("Detected amount column:", amount_col, "\n")
 cat("Detected time column:", time_col, "\n")
 
-# -------------------------
+
+#***********************************************************
 # CLEANING 5: CREATE CLEAN NUMERIC COPY OF AMOUNT
-# -------------------------
+#***********************************************************
 # Keeps original amount column unchanged
 # Creates a separate numeric column for analysis/modeling
 if (!is.na(amount_col)) {
@@ -84,9 +85,9 @@ if (!is.na(amount_col)) {
   df$transaction_amount_clean <- as.numeric(df$transaction_amount_clean)
 }
 
-# -------------------------
+#***********************************************************
 # CLEANING 6: REMOVE ROWS WITHOUT TRANSACTION TIME
-# -------------------------
+#***********************************************************
 # Rows without transaction time/date are not useful for time-based analysis
 # so they are removed before feature extraction
 if (!is.na(time_col)) {
@@ -100,9 +101,9 @@ if (!is.na(time_col)) {
   cat("Rows removed due to missing transaction time/date:", before_rows - after_rows, "\n")
 }
 
-# -------------------------
+#***********************************************************
 # CLEANING 7: HANDLE MISSING VALUES
-# -------------------------
+#***********************************************************
 # Numeric NA values -> replaced with MEDIAN of the column
 # Categorical NA values -> replaced with MODE of the column
 
@@ -128,13 +129,13 @@ for (col in cat_cols) {
   }
 }
 
-# =========================================================
-# ================= DATA TRANSFORMATION ====================
-# =========================================================
+#***********************************************************
+#********************DATA TRANSFORMATION********************
+#***********************************************************
 
-# -------------------------
+#***********************************************************
 # TRANSFORMATION 1: EXTRACT TIME FEATURES
-# -------------------------
+#***********************************************************
 # Dataset date format = MM/DD/YYYY HH:MM
 # Example: 11/24/2023 22:39
 if (!is.na(time_col)) {
@@ -156,9 +157,9 @@ if (!is.na(time_col)) {
   df$transaction_second <- second(parsed_time)
 }
 
-# -------------------------
+#***********************************************************
 # TRANSFORMATION 2: HANDLE OUTLIERS IN CLEAN AMOUNT COLUMN
-# -------------------------
+#***********************************************************
 # Uses IQR capping on the cleaned numeric amount column only
 # Original amount column remains unchanged
 if ("transaction_amount_clean" %in% names(df)) {
@@ -173,9 +174,9 @@ if ("transaction_amount_clean" %in% names(df)) {
   df$transaction_amount_clean <- pmin(pmax(df$transaction_amount_clean, lower), upper)
 }
 
-# -------------------------
+#***********************************************************
 # TRANSFORMATION 3: ENCODE SELECTED CATEGORICAL VARIABLES
-# -------------------------
+#***********************************************************
 # One-hot encoding is applied only to selected text columns
 # These important columns are NOT encoded:
 # transaction_id, merchant_id, customer_id, customer_age,
@@ -200,13 +201,14 @@ if (length(encode_cols) > 0) {
                    remove_first_dummy = TRUE)
 }
 
-# =========================================================
-# ============ FINAL DATASET ORGANIZATION ==================
-# =========================================================
+#***********************************************************
+#*****************FINAL DATASET ORGANIZATION****************
+# #***********************************************************
 
-# -------------------------
+
+#***********************************************************
 # ORGANIZE COLUMNS FOR READABLE OUTPUT
-# -------------------------
+#***********************************************************
 # Places important original columns first
 front_cols <- c("transaction_id",
                 "merchant_id",
@@ -230,10 +232,9 @@ other_cols <- setdiff(names(df), front_cols)
 
 df <- df[, c(front_cols, other_cols)]
 
-# =========================================================
-# ==================== FINAL CHECK =========================
-# =========================================================
-
+#***********************************************************
+#*********************** FINAL CHECK ***********************
+#***********************************************************
 # Check if any NA values still remain
 na_counts <- colSums(is.na(df))
 
@@ -247,9 +248,6 @@ if (sum(na_counts) == 0) {
 # Display final size of dataset
 cat("\nFinal dataset shape:", nrow(df), "rows x", ncol(df), "columns\n")
 
-# =========================================================
-# ================= SAVE FINAL OUTPUT ======================
-# =========================================================
 
 # Save the cleaned and transformed dataset
 write.csv(df, "cleaned_transformed_fraud_final.csv", row.names = FALSE)
