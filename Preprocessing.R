@@ -23,10 +23,10 @@
 #***********************************************************
 # LOAD REQUIRED LIBRARIES
 #***********************************************************
-library(tidyverse)
-library(janitor)
-library(lubridate)
-library(fastDummies)
+library(tidyverse)#data manipulation
+library(janitor)#cleaning column names 
+library(lubridate)#handling date time formats
+library(fastDummies)#one-hot encodeing categorical values 
 
 #***********************************************************
 # STEP 1: LOAD DATASET
